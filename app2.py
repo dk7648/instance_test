@@ -1,3 +1,14 @@
+"""
+EC2 Instance Family Micro-Benchmark (rows/s)
+
+목적
+- 인스턴스 패밀리/아키텍처(x86 vs ARM)에 따른 성능 차이를 "같은 입력 데이터"로 비교
+- CPU 연산(해시), 파일 쓰기(버퍼드/선택적 fsync), SQLite insert(기본/PRAGMA 튜닝) 측정
+
+출력
+- 각 테스트별 median/p95/min/max 시간 + throughput(rows/s)
+"""
+
 import csv
 import hashlib
 import os
@@ -12,26 +23,30 @@ from pathlib import Path
 from typing import List, Optional
 
 # ==========================================================
-# ✅ HARD-CODED SETTINGS (여기만 바꾸면 됨)
+# 0) SETTINGS
 # ==========================================================
-CSV_PATH = "sap500_data.csv"   # 예: "/home/ubuntu/sap500_data.csv"
-OUTDIR   = "."                # 예: "/tmp" (EBS), "/mnt/nvme" (NVMe)
+CSV_PATH = "sap500_data.csv"
+OUTDIR   = "."
 
-LIMIT_ROWS = 0                # 0이면 전체, 예: 5000
-REPEATS = 5                   # 반복 횟수 (median/p95 안정화)
-WORKERS = "auto"              # "auto" 또는 숫자 (예: 4)
-CPU_ROUNDS = 30               # CPU 차이 크게 보려면 ↑ (예: 30~80)
+LIMIT_ROWS = 0 
+REPEATS = 5                   # 반복 횟수
+WORKERS = "auto"
 
-BLOCK_LINES = 5000            # buffered write block 크기(throughput)
-FSYNC_LINES = 0               # fsync 매 N줄 (0이면 비활성, 예: 1 또는 200)
+# --- CPU 테스트 강도 (해시를 몇 번 반복할지)
+CPU_ROUNDS = 30
 
-SQLITE_COMMIT_EVERY = 1000    # 1=매행 커밋(느림), 1000 추천, 0=끝에서 1번만 커밋
+# --- 파일 쓰기 테스트 설정
+BLOCK_LINES = 5000            # buffered write block 크기
+FSYNC_LINES = 0
+
+# --- SQLite insert 테스트 설정
+SQLITE_COMMIT_EVERY = 1000    # 커밋 단위
 # ==========================================================
 
 
-# -----------------------------
-# Utilities
-# -----------------------------
+# ==========================================================
+# 1) 작은 유틸리티 (시간/통계/시스템 정보)
+# ==========================================================
 def now_perf():
     return time.perf_counter()
 
@@ -39,6 +54,7 @@ def fmt_sec(x: float) -> str:
     return f"{x:.4f}s"
 
 def percentile(values: List[float], p: float) -> float:
+    """간단한 퍼센타일 계산 (p=0.95 등)"""
     if not values:
         return float("nan")
     xs = sorted(values)
@@ -50,6 +66,7 @@ def percentile(values: List[float], p: float) -> float:
     return xs[f] + (xs[c] - xs[f]) * (k - f)
 
 def sys_info():
+    """실험 기록용: 파이썬/플랫폼/아키텍처/코어 수"""
     return {
         "python": sys.version.split()[0],
         "platform": platform.platform(),
@@ -58,16 +75,18 @@ def sys_info():
     }
 
 def summarize_times(times: List[float]) -> str:
+    """여러 번 측정한 실행 시간을 median/p95/min/max로 요약"""
     med = statistics.median(times)
     p95 = percentile(times, 0.95)
     mn = min(times)
     mx = max(times)
     return f"median={fmt_sec(med)}, p95={fmt_sec(p95)}, min={fmt_sec(mn)}, max={fmt_sec(mx)}"
+# ==========================================================
 
 
-# -----------------------------
-# Data loading (same data)
-# -----------------------------
+# ==========================================================
+# 2) 데이터 로딩 (모든 테스트가 동일 데이터 사용)
+# ==========================================================
 @dataclass
 class CsvData:
     header: List[str]
@@ -85,16 +104,18 @@ def load_csv_data(file_path: str, limit: Optional[int] = None) -> CsvData:
     return CsvData(header=header, rows=rows)
 
 def build_csv_lines_bytes(data: CsvData) -> List[bytes]:
-    lines = []
+    lines: List[bytes] = []
     lines.append((",".join(data.header) + "\n").encode("utf-8"))
     for r in data.rows:
         lines.append((",".join(r) + "\n").encode("utf-8"))
     return lines
+# ==========================================================
 
 
-# -----------------------------
-# Benchmarks
-# -----------------------------
+# ==========================================================
+# 3) TEST 1 : CPU-bound
+#    - multiprocessing으로 코어를 최대한 활용
+# ==========================================================
 def _hash_worker(args):
     chunk_rows, rounds = args
     out = 0
@@ -110,7 +131,7 @@ def bench_cpu_hash(rows: List[List[str]], rounds: int, workers: int) -> float:
     n = len(rows)
     w = max(1, workers)
     chunk_size = (n + w - 1) // w
-    chunks = [rows[i:i+chunk_size] for i in range(0, n, chunk_size)]
+    chunks = [rows[i:i + chunk_size] for i in range(0, n, chunk_size)]
 
     start = now_perf()
     if w == 1:
@@ -119,16 +140,16 @@ def bench_cpu_hash(rows: List[List[str]], rounds: int, workers: int) -> float:
         with Pool(processes=w) as pool:
             pool.map(_hash_worker, [(c, rounds) for c in chunks])
     return now_perf() - start
+# ==========================================================
 
+
+# ==========================================================
+# 4) TEST 2: I/O write
+# ==========================================================
 def bench_io_write(lines: List[bytes], out_path: str, fsync_every: int, block_lines: int) -> float:
-    """
-    fsync_every:
-      - 0  : no fsync (buffered)
-      - N>0: fsync every N lines (latency-sensitive)
-    """
     start = now_perf()
     with open(out_path, "wb", buffering=1024 * 1024) as f:
-        buf = []
+        buf: List[bytes] = []
         for i, line in enumerate(lines, start=1):
             buf.append(line)
             if len(buf) >= block_lines:
@@ -147,7 +168,12 @@ def bench_io_write(lines: List[bytes], out_path: str, fsync_every: int, block_li
             os.fsync(f.fileno())
 
     return now_perf() - start
+# ==========================================================
 
+
+# ==========================================================
+# 5) TEST 3: SQLite insert
+# ==========================================================
 def bench_sqlite_insert(
     rows: List[List[str]],
     header: List[str],
@@ -162,19 +188,21 @@ def bench_sqlite_insert(
     cur = conn.cursor()
 
     if pragmas:
-        # CPU 차이 더 잘 보이게 (I/O 지배 완화)
         cur.execute("PRAGMA journal_mode=WAL;")
         cur.execute("PRAGMA synchronous=NORMAL;")
         cur.execute("PRAGMA temp_store=MEMORY;")
         cur.execute("PRAGMA cache_size=-200000;")   # ~200MB
         cur.execute("PRAGMA mmap_size=268435456;")  # 256MB
 
+    # 테이블 생성 (CSV 컬럼을 전부 TEXT로)
     col_def = ", ".join([f'"{c}" TEXT' for c in header])
     cur.execute(f"CREATE TABLE test_table ({col_def})")
 
+    # INSERT 준비
     placeholders = ",".join(["?"] * len(header))
     q = f"INSERT INTO test_table VALUES ({placeholders})"
 
+    # INSERT + 주기적 commit
     start = now_perf()
     pending = 0
     cur.execute("BEGIN;")
@@ -189,22 +217,25 @@ def bench_sqlite_insert(
     conn.commit()
     conn.close()
     return now_perf() - start
+# ==========================================================
 
 
-# -----------------------------
-# Main
-# -----------------------------
+# ==========================================================
+# 6) Main
+# ==========================================================
 def main():
-    # Check paths
+    # (A) 입력/출력 경로 확인
     if not os.path.exists(CSV_PATH):
         raise FileNotFoundError(f"CSV_PATH not found: {CSV_PATH} (경로를 하드코딩 값으로 수정하세요)")
 
     outdir = Path(OUTDIR)
     outdir.mkdir(parents=True, exist_ok=True)
 
+    # (B) 실행 파라미터 결정
     workers = cpu_count() if WORKERS == "auto" else max(1, int(WORKERS))
     limit = None if LIMIT_ROWS == 0 else LIMIT_ROWS
 
+    # (C) 헤더 출력(재현성 기록)
     print("=" * 72)
     print("System:", sys_info())
     print("CSV_PATH:", CSV_PATH)
@@ -213,26 +244,34 @@ def main():
     print(f"block_lines={BLOCK_LINES}, fsync_lines={FSYNC_LINES}, sqlite_commit_every={SQLITE_COMMIT_EVERY}")
     print("=" * 72)
 
+    # (D) 데이터 로딩 (모든 테스트가 동일 데이터 사용)
     data = load_csv_data(CSV_PATH, limit=limit)
     nrows = len(data.rows)
     print(f"[*] Loaded rows: {nrows:,}, cols: {len(data.header)}")
 
+    # 파일쓰기용 bytes 라인 생성(1회)
     lines = build_csv_lines_bytes(data)
 
-    # 1) CPU-bound
+    # ------------------------------------------------------
+    # (1) CPU_HASH: CPU 연산(병렬) 측정
+    # ------------------------------------------------------
     cpu_times = []
     for _ in range(REPEATS):
         cpu_times.append(bench_cpu_hash(data.rows, rounds=CPU_ROUNDS, workers=workers))
     cpu_thr = nrows / statistics.median(cpu_times)
 
-    # 2) I/O buffered throughput
+    # ------------------------------------------------------
+    # (2) IO_BUFFERED_WRITE: fsync 없는 버퍼드 쓰기 처리량
+    # ------------------------------------------------------
     io_buf_times = []
     csv_buf_path = str(outdir / "bench_buffered.csv")
     for _ in range(REPEATS):
         io_buf_times.append(bench_io_write(lines, csv_buf_path, fsync_every=0, block_lines=BLOCK_LINES))
     io_buf_thr = nrows / statistics.median(io_buf_times)
 
-    # 3) I/O fsync latency (optional)
+    # ------------------------------------------------------
+    # (3) IO_FSYNC_WRITE: 선택 옵션 (FSYNC_LINES > 0 일 때만)
+    # ------------------------------------------------------
     io_fsync_times = []
     io_fsync_thr = None
     if FSYNC_LINES > 0:
@@ -241,7 +280,9 @@ def main():
             io_fsync_times.append(bench_io_write(lines, csv_fsync_path, fsync_every=FSYNC_LINES, block_lines=1))
         io_fsync_thr = nrows / statistics.median(io_fsync_times)
 
-    # 4) SQLite default
+    # ------------------------------------------------------
+    # (4) SQLITE_DEFAULT: 기본 설정 insert
+    # ------------------------------------------------------
     sqlite_times = []
     db_path = str(outdir / "bench_default.db")
     for _ in range(REPEATS):
@@ -250,7 +291,9 @@ def main():
         )
     sqlite_thr = nrows / statistics.median(sqlite_times)
 
-    # 5) SQLite pragmas
+    # ------------------------------------------------------
+    # (5) SQLITE_PRAGMAS: WAL/NORMAL/mmap/cache 적용 insert
+    # ------------------------------------------------------
     sqlite_fast_times = []
     db_fast_path = str(outdir / "bench_pragmas.db")
     for _ in range(REPEATS):
@@ -259,7 +302,7 @@ def main():
         )
     sqlite_fast_thr = nrows / statistics.median(sqlite_fast_times)
 
-    # Print results
+    # (E) 결과 출력
     print("\n" + "=" * 72)
     print(f"RESULTS (rows={nrows:,})")
     print("=" * 72)
@@ -284,13 +327,6 @@ def main():
     print(f"\n[SQLITE_PRAGMAS (commit_every={SQLITE_COMMIT_EVERY})]")
     print("  " + summarize_times(sqlite_fast_times))
     print(f"  throughput: {sqlite_fast_thr:,.2f} rows/s")
-
-    print("\nTips:")
-    print(" - 패밀리(C vs M) 차이 크게: CPU_ROUNDS를 50~100으로 올리세요.")
-    print(" - 스토리지(EBS vs NVMe) 차이: OUTDIR을 NVMe 마운트로 바꿔서 IO/SQLite 비교하세요.")
-    print(" - commit_every=1은 다시 fsync 지배가 되어 패밀리 차이가 안 보이는 게 정상입니다.")
-    print("=" * 72)
-
 
 if __name__ == "__main__":
     main()
