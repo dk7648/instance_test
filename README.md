@@ -8,7 +8,7 @@
 
 ## 1) 한 줄 결론
 
-- ✅ **전체 1등(전천후):** `i8g.xlarge` *(ARM, Graviton4)*
+- ✅ **전체 1등:** `i8g.xlarge` *(ARM, Graviton4)*
 - ✅ **x86에서 가장 안정적인 상위권:** `c6id.xlarge`
 - ⚠️ **`d2.xlarge`는 대용량 저장용** *(연산/DB/랜덤 I/O에는 부적합)*
 - 📌 **ARM이 무조건 빠른 건 아님:** `i8g`만 “전 영역 강함”, `m6g/c6g`는 **CPU만 우세**하고 **I/O/SQLite는 약세**
@@ -22,7 +22,7 @@
 - **x86 vs ARM(Graviton)** 체감 성능 비교
 - 스토리지 성향(HDD/Nitro SSD/NVMe 등)이 성능에 미치는 영향 확인
 
-### 🛠️ 테스트 항목(3개)
+### 🛠️ 테스트 항목
 
 | 테스트 | 의미 | 무엇이 강하면 유리? |
 |---|---|---|
@@ -65,8 +65,11 @@
 
 ---
 
-## 3) 분석 대상 인스턴스 (4 vCPU)
+## 3) 분석 대상 인스턴스
 
+- 모든 인스턴스는 vCPU 4개로 통일
+- 패밀리 별 메모리 크기 통일
+  
 | 아키텍처 | 타입 | 메모리 | 포지션 |
 |---|---|---:|---|
 | x86 | `m6i.xlarge` | 16 GiB | 범용 |
@@ -108,6 +111,11 @@
 - `i8g(Graviton4)`: **CPU + I/O + SQLite 모두 강함**
 - `m6g/c6g(Graviton2)`: **CPU는 강한데 I/O/SQLite는 약세**
 
+<img width="3000" height="1800" alt="benchmark_cpu_hash" src="https://github.com/user-attachments/assets/7884fa9c-3a14-4def-8584-ccfbba5e12f8" />
+<img width="3000" height="1800" alt="benchmark_io_buffered_write" src="https://github.com/user-attachments/assets/6703e4e2-edba-4ef3-b069-ff15557807c4" />
+<img width="3000" height="1800" alt="benchmark_sqlite_pragmas" src="https://github.com/user-attachments/assets/d7dead97-3396-4698-8e68-6593052c5291" />
+
+
 ---
 
 ## 5) 패밀리별 정리
@@ -117,7 +125,7 @@
 - I/O: ARM(m6g) **-18.0%**
 - SQLite: ARM(m6g) **-36.6%**
 
-✅ 결론: **범용 서비스 + DB/쓰기면 `m6i`**, CPU 비중 높으면 `m6g` 고려
+✅ 결론: **범용 서비스 + DB/쓰기면 `m6i(x86)`**, CPU 비중 높으면 `m6g(ARM)` 고려
 
 ---
 
@@ -126,7 +134,7 @@
 - I/O: i8g **+5.7%**
 - SQLite: i8g **+3.6%**
 
-✅ 결론: **대량 처리/ETL/적재는 `i8g`가 최강**
+✅ 결론: **대량 처리/ETL/적재는 `i8g(ARM)`가 최강**
 
 ---
 
@@ -135,7 +143,9 @@
 - I/O: c6g **-28.2%**
 - SQLite: c6g **-37.4%**
 
-✅ 결론: **DB 적재/쓰기 중심이면 `c6id`**, 순수 연산 중심이면 `c6g`
+✅ 결론: **DB 적재/쓰기 중심이면 `c6id(x86)`**, 순수 연산 중심이면 `c6g(ARM)`
+
+➡️ CPU처리 ARM 우세, 쓰기/SQLite는 x86 우세한 경향 확인
 
 ---
 
@@ -146,7 +156,7 @@
 - `d2`는 **대용량 저장 목적**이라 이 실험(처리량 중심)에서 불리할 수 있음
 
 ### 🧠 ARM은 “Graviton 세대” 영향이 큼
-- `i8g(Graviton4)`는 아키텍처/플랫폼 개선 폭이 커서 **전천후 우세**
+- `i8g(Graviton4)`는 아키텍처/플랫폼 개선 폭이 커서 **우세**
 - `m6g/c6g(Graviton2)`는 CPU는 잘 나오지만 **I/O/DB 경로**에서 기대만큼 안 나올 수 있음
 
 📌 결론: **‘ARM vs x86’가 아니라 ‘인스턴스/세대/스토리지 조합’ 싸움**
@@ -157,7 +167,7 @@
 
 | 워크로드 | 추천 | 이유 |
 |---|---|---|
-| 전천후 최고 성능 | **`i8g.xlarge`** | CPU/I/O/SQLite 모두 1등 |
+| 최고 성능 | **`i8g.xlarge`** | CPU/I/O/SQLite 모두 1등 |
 | x86 유지 + 상위권 | **`c6id.xlarge`** | x86 중 전 테스트 1등 |
 | 범용 서비스(안정) | `m6i.xlarge` | 밸런스 + I/O/SQLite 안정적 |
 | 연산 위주(가성비) | `c6g.xlarge` | CPU_HASH 우세 |
