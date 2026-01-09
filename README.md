@@ -1,4 +1,4 @@
-# 🚀 AWS EC2 Instance Performance 분석 리포트 (발표용 README)
+# 🚀 AWS EC2 Instance Performance 분석 리포트
 
 **주제:** EC2 인스턴스 패밀리 & 아키텍처(x86 vs ARM) 성능 비교  
 **지표:** Throughput (rows/s) — **높을수록 더 빠름**  
@@ -6,7 +6,7 @@
 
 ---
 
-## 1) 한 줄 결론 (TL;DR)
+## 1) 결론
 
 - ✅ **전체 1등(전천후):** `i8g.xlarge` *(ARM, Graviton4)*
 - ✅ **x86에서 가장 안정적인 상위권:** `c6id.xlarge`
@@ -22,7 +22,7 @@
 - **x86 vs ARM(Graviton)** 체감 성능 비교
 - 스토리지 성향(HDD/Nitro SSD/NVMe 등)이 성능에 미치는 영향 확인
 
-### 🛠️ 테스트 항목(3개)
+### 🛠️ 테스트 항목
 
 | 테스트 | 의미 | 무엇이 강하면 유리? |
 |---|---|---|
@@ -32,8 +32,10 @@
 
 ---
 
-## 3) 분석 대상 인스턴스 (4 vCPU)
+## 3) 분석 대상 인스턴스
 
+- 모든 인스턴스는 vCPU 4개로 진행
+  
 | 아키텍처 | 타입 | 메모리 | 포지션 |
 |---|---|---:|---|
 | x86 | `m6i.xlarge` | 16 GiB | 범용 |
@@ -104,9 +106,9 @@
 
 ✅ 결론: **DB 적재/쓰기 중심이면 `c6id`**, 순수 연산 중심이면 `c6g`
 
-<img width="1000" height="600" alt="benchmark_cpu_hash" src="https://github.com/user-attachments/assets/5fc17aeb-cfa9-49bc-a061-01ef3700f71b" />
-<img width="1000" height="600" alt="benchmark_io_buffered_write" src="https://github.com/user-attachments/assets/3250469b-f807-4953-ae81-63f23ab59492" />
-<img width="1000" height="600" alt="benchmark_sqlite_pragmas" src="https://github.com/user-attachments/assets/0fc390a3-086f-4e12-85cf-83d5a7198f91" />
+<img width="1000" alt="benchmark_cpu_hash" src="https://github.com/user-attachments/assets/5fc17aeb-cfa9-49bc-a061-01ef3700f71b" />
+<img width="1000" alt="benchmark_io_buffered_write" src="https://github.com/user-attachments/assets/3250469b-f807-4953-ae81-63f23ab59492" />
+<img width="1000" alt="benchmark_sqlite_pragmas" src="https://github.com/user-attachments/assets/0fc390a3-086f-4e12-85cf-83d5a7198f91" />
 
 
 
